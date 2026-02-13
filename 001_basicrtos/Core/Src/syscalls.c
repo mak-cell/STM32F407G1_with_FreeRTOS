@@ -30,6 +30,38 @@
 #include <sys/time.h>
 #include <sys/times.h>
 
+//Debug Exception and Monitor Control Register base address - Arm data sheet
+#define DEMCR 				    *((volatile uint32_t*) 0xE000EDFCU)
+
+/* ITM register addresses (from arm-cortex m4 programming manual )*/
+#define ITM_STIM0   	*((volatile uint32_t*) 0xE0000000 )
+#define ITM_TRACE_EN          	*((volatile uint32_t*) 0xE0000E00 )
+
+
+void ITM_sendchar(uint8_t ch)
+{
+	//Enable TRACEN
+	DEMCR |= ( 1 << 24);
+
+	//Enable stimulus port
+	ITM_TRACE_EN |= (1 << 0);
+
+	//Read FIFO status
+	while(!(ITM_STIM0 & 1));
+
+	//Write to ITM stimulus port0
+	ITM_STIM0 = ch;
+}
+
+//static inline void ITM_sendchar(uint8_t ch)
+//{
+//    if ((ITM->TCR & ITM_TCR_ITMENA_Msk) &&
+//        (ITM->TER & 1))
+//    {
+//        while (ITM->PORT[0].u32 == 0);
+//        ITM->PORT[0].u8 = ch;
+//    }
+//}
 
 /* Variables */
 extern int __io_putchar(int ch) __attribute__((weak));
@@ -84,7 +116,8 @@ __attribute__((weak)) int _write(int file, char *ptr, int len)
 
   for (DataIdx = 0; DataIdx < len; DataIdx++)
   {
-    __io_putchar(*ptr++);
+	  ITM_sendchar(*ptr++);
+    //__io_putchar(*ptr++);
   }
   return len;
 }

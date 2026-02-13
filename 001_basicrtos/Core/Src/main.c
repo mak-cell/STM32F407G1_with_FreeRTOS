@@ -21,7 +21,9 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-
+#include<stdio.h>
+#include "FreeRTOS.h"
+#include "task.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -50,6 +52,11 @@ void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
 /* USER CODE BEGIN PFP */
 
+static void task1_handler(void* parameters);
+static void task2_handler(void* parameters);
+
+
+
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -65,7 +72,9 @@ int main(void)
 {
 
   /* USER CODE BEGIN 1 */
-
+	TaskHandle_t task1_handle;
+	TaskHandle_t task2_handle;
+	BaseType_t status;
   /* USER CODE END 1 */
 
   /* MCU Configuration--------------------------------------------------------*/
@@ -87,6 +96,21 @@ int main(void)
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
   /* USER CODE BEGIN 2 */
+
+  status = xTaskCreate(task1_handler, "Task-1", 512, "Hello world from Task-1", 2, &task1_handle);
+
+  configASSERT(status == pdPASS);
+
+  status = xTaskCreate(task2_handler, "Task-2", 512, "Hello world from Task-2", 2, &task2_handle);
+
+  configASSERT(status == pdPASS);
+
+  //start the freeRTOS scheduler
+   vTaskStartScheduler();
+
+
+
+
 
   /* USER CODE END 2 */
 
@@ -292,8 +316,52 @@ static void MX_GPIO_Init(void)
 }
 
 /* USER CODE BEGIN 4 */
+static void task1_handler(void* parameters)
+{
 
+
+	while(1)
+	{
+		printf("Task 1: Running...\r\n");
+		vTaskDelay(pdMS_TO_TICKS(500));
+	}
+
+}
+
+
+static void task2_handler(void* parameters)
+{
+
+	while(1)
+	{
+		printf("Task 2: Running...\r\n");
+		vTaskDelay(pdMS_TO_TICKS(500));
+	}
+
+}
 /* USER CODE END 4 */
+
+/**
+  * @brief  Period elapsed callback in non blocking mode
+  * @note   This function is called  when TIM6 interrupt took place, inside
+  * HAL_TIM_IRQHandler(). It makes a direct call to HAL_IncTick() to increment
+  * a global variable "uwTick" used as application time base.
+  * @param  htim : TIM handle
+  * @retval None
+  */
+void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
+{
+  /* USER CODE BEGIN Callback 0 */
+
+  /* USER CODE END Callback 0 */
+  if (htim->Instance == TIM6)
+  {
+    HAL_IncTick();
+  }
+  /* USER CODE BEGIN Callback 1 */
+
+  /* USER CODE END Callback 1 */
+}
 
 /**
   * @brief  This function is executed in case of error occurrence.
