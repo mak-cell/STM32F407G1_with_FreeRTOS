@@ -324,8 +324,11 @@ static void MX_GPIO_Init(void)
 static void task1_handler(void * param)
 {
 	 SEGGER_SYSVIEW_Start();
+	 char msg[100];
 	while(1){
+		snprintf(msg, 100, "%s\n", (char*)param);
 		printf("Hello from Task-1\n");
+		SEGGER_SYSVIEW_Print(msg);
 //		vTaskDelay(pdMS_TO_TICKS(500));
 		taskYIELD();
 	}
@@ -333,8 +336,11 @@ static void task1_handler(void * param)
 
 static void task2_handler(void * param)
 {
+	char msg[100];
 	while(1){
+		snprintf(msg, 100, "%s\n", (char*)param);
 		printf("Hello from Task-2\n");
+		SEGGER_SYSVIEW_Print(msg);
 //		vTaskDelay(pdMS_TO_TICKS(500));
 		taskYIELD();
 	}
