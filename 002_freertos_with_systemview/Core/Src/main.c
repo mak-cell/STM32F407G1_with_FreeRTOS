@@ -327,7 +327,7 @@ static void task1_handler(void * param)
 	while(1){
 		printf("Hello from Task-1\n");
 //		vTaskDelay(pdMS_TO_TICKS(500));
-		//taskYIELD();
+		taskYIELD();
 	}
 }
 
@@ -336,7 +336,7 @@ static void task2_handler(void * param)
 	while(1){
 		printf("Hello from Task-2\n");
 //		vTaskDelay(pdMS_TO_TICKS(500));
-		//taskYIELD();
+		taskYIELD();
 	}
 }
 
