@@ -24,6 +24,7 @@
 #include<stdio.h>
 #include "FreeRTOS.h"
 #include "task.h"
+#include "SEGGER_SYSVIEW.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -33,7 +34,7 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-
+#define DWT_CTRL (*(volatile uint32_t*)0xE0001000U)
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -94,6 +95,15 @@ int main(void)
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
   /* USER CODE BEGIN 2 */
+  CoreDebug->DEMCR |= CoreDebug_DEMCR_TRCENA_Msk;
+  DWT->CYCCNT = 0;
+  DWT->CTRL |= DWT_CTRL_CYCCNTENA_Msk;
+
+
+  NVIC_SetPriorityGrouping(NVIC_PRIORITYGROUP_4);
+
+  SEGGER_SYSVIEW_Conf();
+
 
   status = xTaskCreate(task1_handler, "Task-1", 512, "Hello Task-1", 2, &task1_handle);
 
@@ -104,6 +114,7 @@ int main(void)
   configASSERT(status == pdPASS);
 
   vTaskStartScheduler();
+
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -312,10 +323,11 @@ static void MX_GPIO_Init(void)
 
 static void task1_handler(void * param)
 {
+	 SEGGER_SYSVIEW_Start();
 	while(1){
 		printf("Hello from Task-1\n");
-		vTaskDelay(pdMS_TO_TICKS(5000));
-		taskYIELD();
+//		vTaskDelay(pdMS_TO_TICKS(500));
+		//taskYIELD();
 	}
 }
 
@@ -323,8 +335,8 @@ static void task2_handler(void * param)
 {
 	while(1){
 		printf("Hello from Task-2\n");
-		vTaskDelay(pdMS_TO_TICKS(5000));
-		taskYIELD();
+//		vTaskDelay(pdMS_TO_TICKS(500));
+		//taskYIELD();
 	}
 }
 
