@@ -1,0 +1,12 @@
+Task A (highest priority)
+Task A is responsible for blinking the green LED, but only after semPtr has been taken
+(within 200 ms of requesting it).
+
+
+Task B periodically utilizes the CPU. The following excerpt has been taken
+
+
+Task C (low priority)
+Task C is responsible for blinking the blue LED, but only after the semPtr has been taken
+(within 200 ms of requesting it). The following excerpt has been taken
+from mainSemPriorityInversion.c:
