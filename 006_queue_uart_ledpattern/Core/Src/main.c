@@ -21,11 +21,6 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-#include "FreeRTOS.h"
-#include "task.h"
-#include "semphr.h"
-#include <stdlib.h>
-#include <stdio.h>
 
 /* USER CODE END Includes */
 
@@ -45,40 +40,42 @@
 /* USER CODE END PM */
 
 /* Private variables ---------------------------------------------------------*/
+RTC_HandleTypeDef hrtc;
+
+UART_HandleTypeDef huart2;
 
 /* USER CODE BEGIN PV */
-SemaphoreHandle_t semPtr;
+TaskHandle_t handle_ledTask;
+TaskHandle_t handle_menuTask;
+TaskHandle_t handle_rtcTask;
+TaskHandle_t handle_printTask;
+TaskHandle_t handle_commandHandlerTask;
+
+QueueHandle_t q_data;
+QueueHandle_t q_print;
+
+//software timer handles
+TimerHandle_t  handle_led_timer[4];
+TimerHandle_t rtc_timer;
+
+volatile uint8_t user_data;
+
+//state variable
+state_t curr_state = sMainMenu;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
 void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
+static void MX_RTC_Init(void);
+static void MX_USART2_UART_Init(void);
 /* USER CODE BEGIN PFP */
-void TaskA(void *param);
-void TaskB(void *param);
-void TaskC(void *param);
-void TaskD(void *param);
+void led_effect_callback(TimerHandle_t xTimer);
+void rtc_report_callback( TimerHandle_t xTimer );
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
-// 1. Define the "Class" structure
-typedef struct {
-    void (*on)(void);
-    void (*off)(void);
-} Led_t;
-
-// 2. Wrap the hardware calls
-void red_on_raw()   { HAL_GPIO_WritePin(GPIOD, GPIO_PIN_14, GPIO_PIN_SET); }
-void red_off_raw()  { HAL_GPIO_WritePin(GPIOD, GPIO_PIN_14, GPIO_PIN_RESET); }
-void green_on_raw() { HAL_GPIO_WritePin(GPIOD, GPIO_PIN_12, GPIO_PIN_SET); }
-void green_off_raw(){ HAL_GPIO_WritePin(GPIOD, GPIO_PIN_12, GPIO_PIN_RESET); }
-void blue_on_raw()  { HAL_GPIO_WritePin(GPIOD, GPIO_PIN_15, GPIO_PIN_SET); }
-void blue_off_raw() { HAL_GPIO_WritePin(GPIOD, GPIO_PIN_15, GPIO_PIN_RESET); }
-
-// 3. Instantiate the "Objects"
-Led_t RedLed   = { .on = red_on_raw,   .off = red_off_raw };
-Led_t GreenLed = { .on = green_on_raw, .off = green_off_raw };
-Led_t BlueLed  = { .on = blue_on_raw,  .off = blue_off_raw };
+/* USER CODE BEGIN 0 */
 
 /* USER CODE END 0 */
 
@@ -111,26 +108,43 @@ int main(void)
 
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
+  MX_RTC_Init();
+  MX_USART2_UART_Init();
   /* USER CODE BEGIN 2 */
 
   BaseType_t status;
 
-  status = xTaskCreate(TaskA, "Task-A", 512, "Task-A", 4, NULL);
+  status = xTaskCreate(ledTask, "ledTask", 250, NULL, 2, &handle_ledTask);
+  configASSERT(status == pdPASS);
+  status = xTaskCreate(menuTask, "menuTask", 250, NULL, 2, &handle_menuTask);
+  configASSERT(status == pdPASS);
+  status = xTaskCreate(rtcTask, "rtcTask", 250, NULL, 2, &handle_rtcTask);
+  configASSERT(status == pdPASS);
+  status = xTaskCreate(printTask, "printTask", 250, NULL, 2, &handle_printTask);
+  configASSERT(status == pdPASS);
+  status = xTaskCreate(commandHandlerTask, "commandHandlerTask", 250, NULL, 2, &handle_commandHandlerTask);
   configASSERT(status == pdPASS);
 
-  status = xTaskCreate(TaskB, "Task-B", 512, "Task-B", 3, NULL);
-  configASSERT(status == pdPASS);
+  q_data = xQueueCreate(10, sizeof(char));
+  configASSERT(q_data != NULL);
 
-  status = xTaskCreate(TaskC, "Task-C", 512, "Task-C", 2, NULL);
-  configASSERT(status == pdPASS);
-#ifdef SEMAPHORE
-  semPtr = xSemaphoreCreateBinary();
-  xSemaphoreGive(semPtr);   // ← VERY IMPORTANT
-#else
-  semPtr = xSemaphoreCreateMutex();
-  assert_param(mutexPtr != NULL);
-#endif
+
+  q_print = xQueueCreate (10, sizeof(size_t));
+
+  configASSERT(q_print != NULL);
+  //Create software timers for LED effects
+  for(int i = 0 ; i < 4 ; i++)
+  	handle_led_timer[i] = xTimerCreate("led_timer",pdMS_TO_TICKS(500),pdTRUE, (void*)(i+1),led_effect_callback);
+
+
+  rtc_timer = xTimerCreate ("rtc_report_timer",pdMS_TO_TICKS(1000),pdTRUE,NULL,rtc_report_callback);
+
+  HAL_UART_Receive_IT(&huart2, (uint8_t*)&user_data, 1);
+
   vTaskStartScheduler();
+
+
+
 
   /* USER CODE END 2 */
 
@@ -162,9 +176,10 @@ void SystemClock_Config(void)
   /** Initializes the RCC Oscillators according to the specified parameters
   * in the RCC_OscInitTypeDef structure.
   */
-  RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSI;
+  RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSI|RCC_OSCILLATORTYPE_LSI;
   RCC_OscInitStruct.HSIState = RCC_HSI_ON;
   RCC_OscInitStruct.HSICalibrationValue = RCC_HSICALIBRATION_DEFAULT;
+  RCC_OscInitStruct.LSIState = RCC_LSI_ON;
   RCC_OscInitStruct.PLL.PLLState = RCC_PLL_ON;
   RCC_OscInitStruct.PLL.PLLSource = RCC_PLLSOURCE_HSI;
   RCC_OscInitStruct.PLL.PLLM = 8;
@@ -189,6 +204,74 @@ void SystemClock_Config(void)
   {
     Error_Handler();
   }
+}
+
+/**
+  * @brief RTC Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_RTC_Init(void)
+{
+
+  /* USER CODE BEGIN RTC_Init 0 */
+
+  /* USER CODE END RTC_Init 0 */
+
+  /* USER CODE BEGIN RTC_Init 1 */
+
+  /* USER CODE END RTC_Init 1 */
+
+  /** Initialize RTC Only
+  */
+  hrtc.Instance = RTC;
+  hrtc.Init.HourFormat = RTC_HOURFORMAT_12;
+  hrtc.Init.AsynchPrediv = 127;
+  hrtc.Init.SynchPrediv = 255;
+  hrtc.Init.OutPut = RTC_OUTPUT_DISABLE;
+  hrtc.Init.OutPutPolarity = RTC_OUTPUT_POLARITY_HIGH;
+  hrtc.Init.OutPutType = RTC_OUTPUT_TYPE_OPENDRAIN;
+  if (HAL_RTC_Init(&hrtc) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN RTC_Init 2 */
+
+  /* USER CODE END RTC_Init 2 */
+
+}
+
+/**
+  * @brief USART2 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_USART2_UART_Init(void)
+{
+
+  /* USER CODE BEGIN USART2_Init 0 */
+
+  /* USER CODE END USART2_Init 0 */
+
+  /* USER CODE BEGIN USART2_Init 1 */
+
+  /* USER CODE END USART2_Init 1 */
+  huart2.Instance = USART2;
+  huart2.Init.BaudRate = 115200;
+  huart2.Init.WordLength = UART_WORDLENGTH_8B;
+  huart2.Init.StopBits = UART_STOPBITS_1;
+  huart2.Init.Parity = UART_PARITY_NONE;
+  huart2.Init.Mode = UART_MODE_TX_RX;
+  huart2.Init.HwFlowCtl = UART_HWCONTROL_NONE;
+  huart2.Init.OverSampling = UART_OVERSAMPLING_16;
+  if (HAL_UART_Init(&huart2) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN USART2_Init 2 */
+
+  /* USER CODE END USART2_Init 2 */
+
 }
 
 /**
@@ -336,68 +419,71 @@ static void MX_GPIO_Init(void)
 }
 
 /* USER CODE BEGIN 4 */
-void lookBusy(uint32_t iterations) {
-    volatile uint32_t i;
-    for (i = 0; i < iterations; i++) {
-        __NOP(); // Assembly "No Operation" to prevent compiler optimization
-    }
+
+void rtc_report_callback( TimerHandle_t xTimer )
+{
+	 show_time_date_itm();
+
 }
 
-uint32_t StmRand(uint32_t min, uint32_t max) {
-    // Simple pseudo-random logic
-    return (rand() % (max - min + 1)) + min;
+
+void led_effect_callback(TimerHandle_t xTimer)
+{
+	 int id;
+	 id = ( uint32_t ) pvTimerGetTimerID( xTimer );
+
+	 switch(id)
+	 {
+	 case 1 :
+		 LED_effect1();
+		 break;
+	 case 2:
+		 LED_effect2();
+		 break;
+	 case 3:
+		 LED_effect3();
+		 break;
+	 case 4:
+		 LED_effect4();
+	 }
+
+}
+void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
+{
+
+	uint8_t dummy;
+	if(xQueueIsQueueFullFromISR(q_data) != pdTRUE)
+	{
+		/*Queue is not full */
+
+		/* Enqueue data byte */
+		xQueueSendFromISR(q_data, (void*)&user_data, NULL);
+	}else{
+		/*Queue is full */
+		/*check, is user_data '\n'? */
+		if(user_data == '\n')
+		{
+			/*user_data = '\n' */
+
+			/* make sure that last data byte of the queue is '\n' */
+			xQueueReceiveFromISR(q_data, (void*)&dummy, NULL);
+			xQueueSendFromISR(q_data, (void*)&user_data, NULL);
+		}
+	}
+
+
+	/* send notification to command handling task if user_data = '\n' */
+	if(user_data == '\n')
+	{
+		xTaskNotifyFromISR(handle_commandHandlerTask,0, eNoAction,NULL);
+	}
+	/*Enable UART data byte reception again in IT mode */
+	HAL_UART_Receive_IT(&huart2, (void*)&user_data, 1);
+
 }
 
-void blinkTwice(Led_t* led) {
-    for (int i = 0; i < 2; i++) {
-        led->on();
-        vTaskDelay(pdMS_TO_TICKS(1000));
-        led->off();
-        vTaskDelay(pdMS_TO_TICKS(1000));
-    }
-}
-// Task A - High priority
-void TaskA(void *param) {
-    while(1) {
-        // Use the function pointer syntax: RedLed.off()
-        if(xSemaphoreTake(semPtr, pdMS_TO_TICKS(100))) {
-            RedLed.off();
-            blinkTwice(&GreenLed);
-            xSemaphoreGive(semPtr);
-        } else {
-            GreenLed.on();
-        }
-        vTaskDelay(pdMS_TO_TICKS(StmRand(500, 1000)));
-    }
-}
 
-// Task B - Medium priority
-void TaskB(void *param) {
-    uint32_t counter = 0;
-    while(1) {
-        printf("starting iteration \r\n");
-        vTaskDelay(pdMS_TO_TICKS(StmRand(75, 150)));
 
-        // This simulates a heavy calculation that doesn't yield the CPU
-        lookBusy(StmRand(100, 500));
-    }
-}
-
-// Task C - Low priority
-void TaskC(void *param) {
-    while(1) {
-    	printf("starting iteration\r\n");
-        if(xSemaphoreTake(semPtr, pdMS_TO_TICKS(1000)) == pdPASS) {
-            RedLed.off(); // Logic: Turn off Red when we have the resource
-            printf("received semPtr\r\n");
-            blinkTwice(&BlueLed);
-            xSemaphoreGive(semPtr);
-        } else {
-            printf("FAILED to receive semphr in time\r\n");
-            RedLed.on(); // Logic: Turn on Red if we timed out
-        }
-    }
-}
 /* USER CODE END 4 */
 
 /**
