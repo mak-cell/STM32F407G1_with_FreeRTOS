@@ -44,10 +44,15 @@
 /* Private variables ---------------------------------------------------------*/
 ADC_HandleTypeDef hadc1;
 
+I2C_HandleTypeDef hi2c1;
+
 UART_HandleTypeDef huart2;
 
 /* USER CODE BEGIN PV */
-
+uint16_t dig_T1;
+int16_t  dig_T2;
+int16_t  dig_T3;
+int32_t  t_fine;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -55,13 +60,85 @@ void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
 static void MX_USART2_UART_Init(void);
 static void MX_ADC1_Init(void);
+static void MX_I2C1_Init(void);
 /* USER CODE BEGIN PFP */
 
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
+#define BMP280_ADDR         (0x76 << 1)
 
+#define BMP280_REG_TEMP_MSB 0xFA
+#define BMP280_REG_CTRL_MEAS 0xF4
+#define BMP280_REG_CALIB 0x88
+#define BMP280_REG_TEMP_MSB 0xFA
+uint8_t i2c_buf[6];
+
+
+void BMP280_ReadCalibration(void)
+{
+    uint8_t calib[6];
+
+    HAL_I2C_Mem_Read(&hi2c1,
+                     BMP280_ADDR,
+                     BMP280_REG_CALIB,
+                     I2C_MEMADD_SIZE_8BIT,
+                     calib,
+                     6,
+                     HAL_MAX_DELAY);
+
+    dig_T1 = (uint16_t)(calib[1] << 8 | calib[0]);
+    dig_T2 = (int16_t)(calib[3] << 8 | calib[2]);
+    dig_T3 = (int16_t)(calib[5] << 8 | calib[4]);
+}
+void BMP280_Init(void)
+{
+    uint8_t ctrl = 0x27; // temp x1, press x1, normal mode
+
+    HAL_I2C_Mem_Write(&hi2c1,
+                      BMP280_ADDR,
+                      BMP280_REG_CTRL_MEAS,
+                      I2C_MEMADD_SIZE_8BIT,
+                      &ctrl,
+                      1,
+                      HAL_MAX_DELAY);
+}
+
+int32_t BMP280_ReadRawTemp(void)
+{
+    uint8_t data[3];
+
+    HAL_I2C_Mem_Read(&hi2c1,
+                     BMP280_ADDR,
+                     BMP280_REG_TEMP_MSB,
+                     I2C_MEMADD_SIZE_8BIT,
+                     data,
+                     3,
+                     HAL_MAX_DELAY);
+
+    return (int32_t)((data[0] << 12) |
+                     (data[1] << 4)  |
+                     (data[2] >> 4));
+}
+
+float BMP280_ReadTemperature(void)
+{
+    int32_t adc_T = BMP280_ReadRawTemp();
+
+    int32_t var1 = ((((adc_T >> 3) - ((int32_t)dig_T1 << 1))) *
+                    ((int32_t)dig_T2)) >> 11;
+
+    int32_t var2 = (((((adc_T >> 4) - ((int32_t)dig_T1)) *
+                      ((adc_T >> 4) - ((int32_t)dig_T1))) >> 12) *
+                    ((int32_t)dig_T3)) >> 14;
+
+    t_fine = var1 + var2;
+
+    float T = (t_fine * 5 + 128) >> 8;
+
+    return T / 100.0f;
+}
 /* USER CODE END 0 */
 
 /**
@@ -95,9 +172,39 @@ int main(void)
   MX_GPIO_Init();
   MX_USART2_UART_Init();
   MX_ADC1_Init();
+  MX_I2C1_Init();
   /* USER CODE BEGIN 2 */
+  char buffer[50];
 
+  HAL_UART_Transmit(&huart2,
+                    (uint8_t*)"--- Scan started ---\r\n",
+                    21,
+                    HAL_MAX_DELAY);
 
+  for (uint8_t addr = 1; addr < 128; addr++)
+  {
+      if (HAL_I2C_IsDeviceReady(&hi2c1,
+                                addr << 1,
+                                1,
+                                10) == HAL_OK)
+      {
+          sprintf(buffer,
+                  "I2C device found at address 0x%02X\r\n",
+                  addr);
+
+          HAL_UART_Transmit(&huart2,
+                            (uint8_t*)buffer,
+                            strlen(buffer),
+                            HAL_MAX_DELAY);
+      }
+  }
+
+  HAL_UART_Transmit(&huart2,
+                    (uint8_t*)"--- Scan finished ---\r\n",
+                    22,
+                    HAL_MAX_DELAY);
+  BMP280_Init();
+  BMP280_ReadCalibration();
 
   /* USER CODE END 2 */
 
@@ -106,23 +213,20 @@ int main(void)
   while (1)
   {
     /* USER CODE END WHILE */
-	  uint32_t adc_val;
-	  float voltage, temperature;
 	  char buffer[50];
 
-	  HAL_ADC_Start(&hadc1);
-	  HAL_ADC_PollForConversion(&hadc1, HAL_MAX_DELAY);
-	  adc_val = HAL_ADC_GetValue(&hadc1);
-
-	  voltage = (adc_val / 4095.0f) * 3.3f;
-	  temperature = voltage * 100.0f;
+	  float temperature = BMP280_ReadTemperature();
 
 	  int temp_x100 = (int)(temperature * 100);
 
 	  sprintf(buffer, "Temp = %d.%02d C\r\n",
 	          temp_x100 / 100,
 	          temp_x100 % 100);
-	  HAL_UART_Transmit(&huart2, (uint8_t*)buffer, strlen(buffer), HAL_MAX_DELAY);
+
+	  HAL_UART_Transmit(&huart2,
+	                    (uint8_t*)buffer,
+	                    strlen(buffer),
+	                    HAL_MAX_DELAY);
 
 	  HAL_Delay(1000);
     /* USER CODE BEGIN 3 */
@@ -217,7 +321,7 @@ static void MX_ADC1_Init(void)
   */
   sConfig.Channel = ADC_CHANNEL_1;
   sConfig.Rank = 1;
-  sConfig.SamplingTime = ADC_SAMPLETIME_84CYCLES;
+  sConfig.SamplingTime = ADC_SAMPLETIME_3CYCLES;
   if (HAL_ADC_ConfigChannel(&hadc1, &sConfig) != HAL_OK)
   {
     Error_Handler();
@@ -225,6 +329,40 @@ static void MX_ADC1_Init(void)
   /* USER CODE BEGIN ADC1_Init 2 */
 
   /* USER CODE END ADC1_Init 2 */
+
+}
+
+/**
+  * @brief I2C1 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_I2C1_Init(void)
+{
+
+  /* USER CODE BEGIN I2C1_Init 0 */
+
+  /* USER CODE END I2C1_Init 0 */
+
+  /* USER CODE BEGIN I2C1_Init 1 */
+
+  /* USER CODE END I2C1_Init 1 */
+  hi2c1.Instance = I2C1;
+  hi2c1.Init.ClockSpeed = 100000;
+  hi2c1.Init.DutyCycle = I2C_DUTYCYCLE_2;
+  hi2c1.Init.OwnAddress1 = 0;
+  hi2c1.Init.AddressingMode = I2C_ADDRESSINGMODE_7BIT;
+  hi2c1.Init.DualAddressMode = I2C_DUALADDRESS_DISABLE;
+  hi2c1.Init.OwnAddress2 = 0;
+  hi2c1.Init.GeneralCallMode = I2C_GENERALCALL_DISABLE;
+  hi2c1.Init.NoStretchMode = I2C_NOSTRETCH_DISABLE;
+  if (HAL_I2C_Init(&hi2c1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN I2C1_Init 2 */
+
+  /* USER CODE END I2C1_Init 2 */
 
 }
 
@@ -385,14 +523,6 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   HAL_GPIO_Init(OTG_FS_OverCurrent_GPIO_Port, &GPIO_InitStruct);
-
-  /*Configure GPIO pins : Audio_SCL_Pin Audio_SDA_Pin */
-  GPIO_InitStruct.Pin = Audio_SCL_Pin|Audio_SDA_Pin;
-  GPIO_InitStruct.Mode = GPIO_MODE_AF_OD;
-  GPIO_InitStruct.Pull = GPIO_PULLUP;
-  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-  GPIO_InitStruct.Alternate = GPIO_AF4_I2C1;
-  HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
 
   /*Configure GPIO pin : MEMS_INT2_Pin */
   GPIO_InitStruct.Pin = MEMS_INT2_Pin;
